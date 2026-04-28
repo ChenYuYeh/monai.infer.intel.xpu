@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configuration
+.env
+.env.*
+
+# KiTS19 input data and local case extracts
+kits19/
+case_*/
+*.zip
+
+# Generated pipeline artifacts
+output/
+
+# Large local binaries / model artifacts
+*.whl
+*.pth
+*.pt
+*.onnx
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

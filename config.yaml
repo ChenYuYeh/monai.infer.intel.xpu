@@ -1,0 +1,112 @@
+# =============================================================
+# Medical AI Pipeline Configuration
+# Holoscan + PyTorch + Clara Medical AI Pipeline
+# Intel XPU / Triton Acceleration Backend
+# =============================================================
+
+pipeline:
+  name: "kits19_kidney_segmentation"
+  version: "1.0.0"
+  description: "CT Kidney Tumor Segmentation using MONAI on Intel XPU"
+
+# --- Data Sources (Diagram: A1, A2, A3) ---
+data:
+  root_dir: "./kits19/data"
+  case_ids:
+    - "case_00002"
+    - "case_00016"
+    - "case_00030"
+    - "case_00117"
+  file_pattern: "segmentation.nii.gz"
+  imaging_frames_dir: "./{case_id}/imaging_frames"
+  segmentation_frames_dir: "./{case_id}/segmentation_frames"
+
+# --- Holoscan Input Operators (Diagram: B1) ---
+input_operators:
+  nifti_reader:
+    enabled: true
+    file_extension: ".nii.gz"
+  frame_reader:
+    enabled: true
+    file_extension: ".jpg"
+    batch_size: 16
+
+# --- Pre-Processing Operators (Diagram: C1) ---
+preprocessing:
+  spatial_size: [128, 128, 64]
+  ct_window:
+    lower: -200.0
+    upper: 300.0
+  normalize:
+    subtrahend: 50.0
+    divisor: 250.0
+  noise_reduction:
+    median_filter_size: 5    # defect-pixel / salt-and-pepper correction (0 = off)
+    gaussian_sigma: 1.0     # light smoothing to reduce model noise sensitivity (0 = off)
+  spacing: [1.0, 1.0, 1.0]
+  orientation: "RAS"
+
+# --- AI Inference (Diagram: D1) ---
+inference:
+  device: "xpu"               # "xpu" | "cpu" | "cuda"
+  triton_backend: false        # Triton JIT kernels (set true for large Intel GPUs)
+  model:
+    architecture: "UNet"
+    in_channels: 1
+    out_channels: 3            # background, kidney, tumor
+    channels: [16, 32, 64, 128, 256]
+    strides: [2, 2, 2, 2]
+    num_res_units: 2
+  weights_path: "./unet_kits19_state_dict.pth"
+  sliding_window:
+    roi_size: [128, 128, 64]
+    sw_batch_size: 4
+    overlap: 0.5
+
+# --- Post-Processing (Diagram: E1) ---
+postprocessing:
+  argmax_dim: 0
+  threshold: 0.5
+  morphology:
+    closing_radius: 2
+    opening_radius: 1
+    kidney_keep_components: 2
+    min_kidney_volume: 1000
+    max_kidney_fraction: 0.70
+    tumor_kidney_margin: 3
+    min_tumor_volume: 100
+  temporal_smoothing:
+    enabled: false
+    window_size: 3
+
+# --- Clara AI Layer (Diagram: F1, F2, F3) ---
+clara:
+  segmentation:
+    labels:
+      0: "background"
+      1: "kidney"
+      2: "tumor"
+  validation:
+    metrics:
+      - "dice"
+      - "hausdorff_distance"
+    confidence_threshold: 0.85
+  deployment:
+    model_format: "pytorch"
+    export_onnx: false
+
+# --- Output & Integration (Diagram: G1, G2, G3) ---
+output:
+  visualization:
+    enabled: true
+    output_dir: "./output/visualizations"
+    overlay_alpha: 0.4
+    colormap:
+      kidney: [255, 0, 0]
+      tumor: [0, 255, 0]
+  export:
+    output_dir: "./output/predictions"
+    save_nifti: true
+  reports:
+    output_dir: "./output/reports"
+    save_metrics_csv: true
