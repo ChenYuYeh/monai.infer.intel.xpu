@@ -37,7 +37,7 @@ Output & Integration (G)  Visualisation overlays, NIfTI export, JSON reports
 monai/
 ├── config.yaml                  # Full pipeline configuration
 ├── requirements.txt             # Python dependencies
-├── unet_kits19_state_dict.pth   # Pre-trained MONAI UNet weights
+├── unet_kits19_state_dict.pth   # Downloaded locally; not included in Git
 │
 ├── src/
 │   ├── __init__.py
@@ -50,7 +50,7 @@ monai/
 │   ├── __init__.py
 │   └── run_all_unittest.py      # Full test-suite
 │
-├── kits19/                      # KiTS19 dataset (NIfTI volumes)
+├── kits19/                      # KiTS19 dataset cloned locally by developers
 │   └── data/case_NNNNN/segmentation.nii.gz
 │
 ├── output/                      # Generated at runtime
@@ -80,6 +80,11 @@ The model outputs per-voxel labels:
 KiTS19 provides 3D NIfTI volumes (`segmentation.nii.gz`) per case.
 Each volume is a stack of axial slices with shape `(D, H, W)`.
 
+The KiTS19 dataset is not included in this repository. Developers must clone
+the dataset themselves from [neheller/kits19](https://github.com/neheller/kits19)
+and place it under `kits19/` so case data is available at
+`kits19/data/case_NNNNN/segmentation.nii.gz`.
+
 ## Pre-processing Pipeline
 
 1. **CT Windowing** — clip HU values to `[-200, 300]`
@@ -97,7 +102,16 @@ Each volume is a stack of axial slices with shape `(D, H, W)`.
 - `strides`: [2, 2, 2, 2]
 - `num_res_units`: 2
 
-Pre-trained weights: `unet_kits19_state_dict.pth`
+Pre-trained weights are not included in this repository. Download
+`unet_kits19_state_dict.pth` from Intel's public OpenVINO model server:
+
+<https://storage.openvinotoolkit.org/repositories/openvino_notebooks/models/kidney-segmentation-kits19/>
+
+Place the file at the repository root, or update `model.path` in
+`config.yaml` to point to your local copy. For more context on loading this
+PyTorch model, see the OpenVINO notebook section:
+
+<https://docs.openvino.ai/2024/notebooks/ct-segmentation-quantize-nncf-with-output.html#load-pytorch-model>
 
 ## Intel XPU + Triton Acceleration
 
@@ -119,7 +133,15 @@ python -m src.infer
 
 # Specific case on CPU
 python -m src.infer --case case_00002 --device cpu
+
+# Batch inference over every case_* folder in kits19/data
+python -m src.infer --input kits19/data --device xpu
 ```
+
+Batch inference scans `kits19/data` for `case_*` folders, runs the configured
+MONAI UNet pipeline for each case, and writes predictions to
+`output/predictions/` with filenames such as `case_00002_pred.npy`. Reports are
+written to `output/reports/`.
 
 ## Evaluation Metric — Dice Score
 
@@ -134,9 +156,17 @@ Computed by `ClaraSegmentationModule.compute_dice()` in `src/pipeline.py`.
 ```bash
 # Generate montage + comparison images
 python -m src.visualize --case case_00002
+
+# Visualize one case at a specific axial slice
+python -m src.visualize --case case_00002 --slice 80
+
+# Batch visualization over every case_* folder in kits19/data
+python -m src.visualize --input kits19/data
 ```
 
-Outputs PNG files to `output/visualizations/`.
+Batch visualization pairs each case with its corresponding prediction from
+`output/predictions/` and writes PNG montage/comparison images to
+`output/visualizations/`.
 
 ## Benchmarking
 
