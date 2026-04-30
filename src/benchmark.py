@@ -6,7 +6,7 @@ the MONAI UNet inference pipeline.  Implements the benchmarking
 concerns from diagram nodes **D1** and **F2** (Clara-style validation).
 
 Supports:
-- Intel XPU (via ``intel_extension_for_pytorch`` + Triton)
+- Intel XPU (via upstream PyTorch + Triton)
 - CUDA (via standard PyTorch)
 - CPU baseline
 
@@ -35,6 +35,7 @@ import torch
 from src.pipeline import (
     InferenceOperator,
     PreProcessingOperator,
+    get_device,
     load_config,
     resolve_device,
 )
@@ -167,15 +168,11 @@ def compare_devices(
 ) -> List[Dict]:
     """Run benchmarks on multiple devices and return a comparison table."""
     if devices is None:
-        devices = ["cpu"]
-        try:
-            import intel_extension_for_pytorch  # noqa: F401
-            if torch.xpu.is_available():
-                devices.append("xpu")
-        except ImportError:
-            pass
-        if torch.cuda.is_available():
-            devices.append("cuda")
+        devices = [
+            candidate
+            for candidate in ("cpu", "cuda", "xpu", "mps")
+            if get_device(candidate).type == candidate
+        ]
 
     results = []
     for dev in devices:
@@ -217,6 +214,8 @@ def _get_memory_info(device: torch.device) -> Dict[str, str]:
             info["reserved_MB"] = f"{torch.xpu.memory_reserved(device) / 1e6:.1f}"
         except Exception:
             info["note"] = "XPU memory stats not available"
+    elif device.type == "mps":
+        info["note"] = "MPS memory stats not available"
     else:
         try:
             import psutil
@@ -233,9 +232,9 @@ def _get_memory_info(device: torch.device) -> Dict[str, str]:
 # ────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark MONAI inference on Intel XPU")
+    parser = argparse.ArgumentParser(description="Benchmark MONAI inference")
     parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--device", default=None, help="Device to benchmark (xpu|cpu|cuda)")
+    parser.add_argument("--device", default=None, help="Device to benchmark (auto|cpu|cuda|xpu|mps)")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--synthetic", action="store_true", help="Use random input tensor")

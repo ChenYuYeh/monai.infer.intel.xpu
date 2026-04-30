@@ -48,7 +48,7 @@ preprocessing:
 
 # --- AI Inference (Diagram: D1) ---
 inference:
-  device: "xpu"               # "xpu" | "cpu" | "cuda"
+  device: "auto"              # "auto" | "cpu" | "cuda" | "xpu" | "mps"
   triton_backend: false        # Triton JIT kernels (set true for large Intel GPUs)
   model:
     architecture: "UNet"

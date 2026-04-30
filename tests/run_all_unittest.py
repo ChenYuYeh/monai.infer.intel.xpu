@@ -18,6 +18,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -119,11 +120,40 @@ class TestResolveDevice(unittest.TestCase):
         dev = resolve_device("cpu")
         self.assertEqual(dev.type, "cpu")
 
+    def test_auto_uses_available_device(self):
+        from src.pipeline import get_device
+        dev = get_device("auto")
+        self.assertIn(dev.type, ("cpu", "cuda", "xpu", "mps"))
+
     def test_unknown_xpu_falls_back(self):
         from src.pipeline import resolve_device
         dev = resolve_device("xpu")
         # Should be xpu if available, else cpu
         self.assertIn(dev.type, ("xpu", "cpu"))
+
+    def test_unknown_device_falls_back(self):
+        from src.pipeline import get_device
+        dev = get_device("definitely-not-a-device")
+        self.assertEqual(dev.type, "cpu")
+
+    def test_auto_skips_unsupported_iris_xe_xpu(self):
+        import src.pipeline as pipeline
+
+        fake_xpu = SimpleNamespace(
+            is_available=MagicMock(return_value=True),
+            get_device_name=MagicMock(return_value="Intel(R) Iris(R) Xe Graphics"),
+        )
+        fake_backends = SimpleNamespace(
+            mps=SimpleNamespace(is_available=MagicMock(return_value=False))
+        )
+
+        with (
+            patch.object(pipeline.torch.cuda, "is_available", return_value=False),
+            patch.object(pipeline.torch, "xpu", fake_xpu, create=True),
+            patch.object(pipeline.torch, "backends", fake_backends),
+        ):
+            self.assertEqual(pipeline.get_device("auto").type, "cpu")
+            self.assertEqual(pipeline.get_device("xpu").type, "cpu")
 
 
 class TestPreProcessingOperator(unittest.TestCase):

@@ -32,6 +32,12 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+_UNSUPPORTED_XPU_DEVICE_NAME_HINTS = (
+    "iris",
+    "uhd graphics",
+    "hd graphics",
+)
+
 
 # ────────────────────────────────────────────────────────────
 # Helpers
@@ -90,20 +96,73 @@ def _ensure_msvc_env() -> None:
     logger.info("Auto-configured MSVC environment for Triton JIT compilation")
 
 
-def resolve_device(device_name: str) -> torch.device:
-    """Return a torch.device, falling back gracefully.
+def get_device(preferred: str | torch.device | None = "auto") -> torch.device:
+    """Return the best available torch device with graceful CPU fallback."""
+    if isinstance(preferred, torch.device):
+        preferred = str(preferred)
 
-    Since PyTorch 2.5 Intel XPU support is upstream — no IPEX import required.
-    """
-    if device_name == "xpu":
-        if hasattr(torch, "xpu") and torch.xpu.is_available():
-            return torch.device("xpu")
-        logger.warning("Intel XPU requested but not available — falling back to CPU")
+    requested = (preferred or "auto").strip().lower()
+    if requested == "auto":
+        for candidate in ("cuda", "xpu", "mps"):
+            if _is_device_available(candidate):
+                return torch.device(candidate)
         return torch.device("cpu")
-    if device_name == "cuda" and not torch.cuda.is_available():
-        logger.warning("CUDA requested but not available — falling back to CPU")
+
+    try:
+        device = torch.device(requested)
+    except (RuntimeError, TypeError):
+        logger.warning("Unknown device '%s' requested - falling back to CPU", requested)
         return torch.device("cpu")
-    return torch.device(device_name)
+
+    if _is_device_available(device.type):
+        return device
+
+    logger.warning("%s requested but not available - falling back to CPU", device.type.upper())
+    return torch.device("cpu")
+
+
+def resolve_device(device_name: str | torch.device | None = "auto") -> torch.device:
+    """Compatibility wrapper for existing callers."""
+    return get_device(device_name)
+
+
+def _is_device_available(device_type: str) -> bool:
+    """Return whether a device backend is usable in the current PyTorch build."""
+    if device_type == "cpu":
+        return True
+    if device_type == "cuda":
+        return hasattr(torch, "cuda") and torch.cuda.is_available()
+    if device_type == "xpu":
+        if not hasattr(torch, "xpu") or not _is_supported_xpu_device():
+            return False
+        return torch.xpu.is_available()
+    if device_type == "mps":
+        return (
+            hasattr(torch, "backends")
+            and hasattr(torch.backends, "mps")
+            and torch.backends.mps.is_available()
+        )
+    return False
+
+
+def _is_supported_xpu_device() -> bool:
+    """Filter XPU devices PyTorch exposes but does not officially support."""
+    get_device_name = getattr(torch.xpu, "get_device_name", None)
+    if not callable(get_device_name):
+        return True
+
+    try:
+        name = get_device_name(0)
+    except TypeError:
+        name = get_device_name()
+    except Exception:
+        return True
+
+    normalized = str(name).lower()
+    return not any(
+        unsupported in normalized
+        for unsupported in _UNSUPPORTED_XPU_DEVICE_NAME_HINTS
+    )
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -224,16 +283,14 @@ class PreProcessingOperator:
 
 
 # ────────────────────────────────────────────────────────────
-# D — PyTorch / MONAI Inference on Intel XPU + Triton
+# D — PyTorch / MONAI Inference on the resolved device
 # ────────────────────────────────────────────────────────────
 
 class InferenceOperator:
     """Loads a MONAI UNet and runs sliding-window inference (diagram node D1).
 
-    When running on Intel XPU the operator:
-    1. Moves the model to ``torch.device("xpu")``.
-    2. Optionally compiles with ``torch.compile(backend="inductor")``
-       which will emit Triton IR for XPU kernels.
+    The model runs on the configured device. Intel XPU can optionally use
+    ``torch.compile(backend="inductor")`` to emit Triton IR kernels.
     """
 
     def __init__(self, cfg: dict, device: torch.device):
@@ -498,12 +555,29 @@ class MedicalAIPipeline:
         volume = self.input_op.read_nifti(nifti_path)
 
         # C — Pre-process
-        tensor = self.preprocess_op(volume)
+        try:
+            tensor = self.preprocess_op(volume)
 
-        # D — Inference
-        t0 = time.perf_counter()
-        logits = self.inference_op(tensor)
-        infer_time = time.perf_counter() - t0
+            # D — Inference
+            t0 = time.perf_counter()
+            logits = self.inference_op(tensor)
+            infer_time = time.perf_counter() - t0
+        except Exception as exc:
+            if self.device.type == "cpu":
+                raise
+            logger.warning(
+                "%s failed on %s (%s); retrying on CPU",
+                case_id,
+                self.device.type.upper(),
+                exc,
+            )
+            self.device = torch.device("cpu")
+            self.preprocess_op = PreProcessingOperator(self.cfg, self.device)
+            self.inference_op = InferenceOperator(self.cfg, self.device)
+            tensor = self.preprocess_op(volume)
+            t0 = time.perf_counter()
+            logits = self.inference_op(tensor)
+            infer_time = time.perf_counter() - t0
         logger.info("Inference time: %.3f s", infer_time)
 
         # E — Post-process

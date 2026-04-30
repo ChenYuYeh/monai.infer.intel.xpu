@@ -121,7 +121,7 @@ and place it under `kits19/` so case data is available at
 1. **CT Windowing** — clip HU values to `[-200, 300]`
 2. **Normalisation** — `(x - 50) / 250`
 3. **Tensor conversion** — `numpy → torch.Tensor` with batch/channel dims
-4. **Device transfer** — move to Intel XPU (or CPU/CUDA fallback)
+4. **Device transfer** — move to the resolved device (`auto`, CPU, CUDA, XPU, or MPS)
 
 ## Model Architecture
 
@@ -144,14 +144,13 @@ PyTorch model, see the OpenVINO notebook section:
 
 <https://docs.openvino.ai/2024/notebooks/ct-segmentation-quantize-nncf-with-output.html#load-pytorch-model>
 
-## Intel XPU + Triton Acceleration
+## Device Selection + Triton Acceleration
 
 When `inference.triton_backend: true` in `config.yaml`:
 
-1. The model is moved to `torch.device("xpu")`
-2. `torch.compile(backend="inductor")` generates **Triton IR** kernels
-   optimised for Intel GPU (Arc / Data Center Max / Flex)
-3. Fallback to CPU if XPU is not available
+1. `inference.device: "auto"` selects the first available accelerator, then CPU
+2. Explicit `cuda`, `xpu`, `mps`, or `cpu` values are validated before use
+3. `torch.compile(backend="inductor")` is attempted for Intel XPU and falls back to eager mode if compilation fails
 
 Requires PyTorch >= 2.5 (XPU support is upstream -- no IPEX needed)
 
@@ -159,7 +158,7 @@ Requires PyTorch >= 2.5 (XPU support is upstream -- no IPEX needed)
 ## Inference Flow
 
 ```bash
-# Run on Intel XPU (default from config.yaml)
+# Run on the best available device (default from config.yaml)
 python -m src.infer
 
 # Specific case on CPU
@@ -203,7 +202,7 @@ Batch visualization pairs each case with its corresponding prediction from
 
 ```bash
 # Single device
-python -m src.benchmark --device xpu --warmup 3 --runs 10
+python -m src.benchmark --device auto --warmup 3 --runs 10
 
 # Compare all available devices
 python -m src.benchmark --compare
@@ -221,8 +220,8 @@ python -m pytest tests/run_all_unittest.py -v
 
 | Concern | Approach |
 |---------|----------|
-| **Acceleration** | Intel XPU + Triton via `torch.compile(backend="inductor")` |
-| **Fallback** | Graceful degradation to CPU if XPU unavailable |
+| **Acceleration** | CUDA, Intel XPU, or MPS when available; optional XPU Triton via `torch.compile(backend="inductor")` |
+| **Fallback** | Graceful degradation to CPU if the requested backend is unavailable |
 | **Model format** | Native PyTorch `state_dict` (no TensorRT dependency) |
 | **DICOM export** | Extend `OutputOperator` to write DICOM SEG / SR |
 | **Containerisation** | Standard Docker with `intel/oneapi-basekit` base image |

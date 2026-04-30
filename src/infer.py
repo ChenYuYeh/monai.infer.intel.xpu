@@ -4,7 +4,7 @@ infer.py — Standalone Inference Entry-Point
 Loads a pre-trained MONAI UNet, runs sliding-window inference on
 KiTS19 NIfTI volumes, and saves predictions.
 
-Acceleration: Intel XPU via ``intel_extension_for_pytorch`` +
+Acceleration: CUDA or Intel XPU via upstream PyTorch, with optional
 Triton JIT kernels (``torch.compile(backend='inductor')``).
 
 Usage
@@ -129,16 +129,33 @@ def run_inference(
         volume = input_op.read_nifti(nifti_path)
         logger.info("  [B] Input:     Volume shape: %s", volume.shape)
 
-        # C — Pre-process (Python/PyTorch operator)
-        logger.info("  [C] Pre-process: CT window → normalize → device transfer …")
-        tensor = preprocess_op(volume)
-        logger.info("  [C] Pre-process: Tensor %s on %s", tensor.shape, tensor.device)
+        try:
+            # C — Pre-process (Python/PyTorch operator)
+            logger.info("  [C] Pre-process: CT window → normalize → device transfer …")
+            tensor = preprocess_op(volume)
+            logger.info("  [C] Pre-process: Tensor %s on %s", tensor.shape, tensor.device)
 
-        # D — MONAI Inference (UNet + sliding window)
-        logger.info("  [D] MONAI:    Running sliding-window inference (UNet) …")
-        t0 = time.perf_counter()
-        logits = inference_op(tensor)
-        infer_sec = time.perf_counter() - t0
+            # D — MONAI Inference (UNet + sliding window)
+            logger.info("  [D] MONAI:    Running sliding-window inference (UNet) …")
+            t0 = time.perf_counter()
+            logits = inference_op(tensor)
+            infer_sec = time.perf_counter() - t0
+        except Exception as exc:
+            if device.type == "cpu":
+                raise
+            logger.warning(
+                "  [D] MONAI:    %s failed (%s); retrying this case on CPU",
+                device.type.upper(),
+                exc,
+            )
+            device = torch.device("cpu")
+            preprocess_op = PreProcessingOperator(cfg, device)
+            inference_op = InferenceOperator(cfg, device)
+            tensor = preprocess_op(volume)
+            logger.info("  [C] Pre-process: Tensor %s on %s", tensor.shape, tensor.device)
+            t0 = time.perf_counter()
+            logits = inference_op(tensor)
+            infer_sec = time.perf_counter() - t0
         logger.info("  [D] MONAI:    Inference complete — %.3f s", infer_sec)
 
         # E — Post-process
@@ -171,6 +188,12 @@ def run_inference(
             torch.xpu.empty_cache()
         elif device.type == "cuda":
             torch.cuda.empty_cache()
+        elif (
+            device.type == "mps"
+            and hasattr(torch, "mps")
+            and hasattr(torch.mps, "empty_cache")
+        ):
+            torch.mps.empty_cache()
         gc.collect()
 
     return results
@@ -181,11 +204,11 @@ def run_inference(
 # ────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MONAI KiTS19 inference on Intel XPU")
+    parser = argparse.ArgumentParser(description="MONAI KiTS19 inference")
     parser.add_argument("--config", default="config.yaml", help="Pipeline config YAML")
     parser.add_argument("--case", default=None, help="Single case ID (e.g. case_00002)")
     parser.add_argument("--input", default=None, help="Folder containing case_* subfolders")
-    parser.add_argument("--device", default=None, help="Override device (xpu|cpu|cuda)")
+    parser.add_argument("--device", default=None, help="Override device (auto|cpu|cuda|xpu|mps)")
     args = parser.parse_args()
 
     results = run_inference(
