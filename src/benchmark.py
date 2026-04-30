@@ -3,7 +3,7 @@ benchmark.py — Inference Benchmarking on Intel XPU / CPU
 =========================================================
 Measures throughput, latency percentiles, and memory usage for
 the MONAI UNet inference pipeline.  Implements the benchmarking
-concerns from diagram nodes **D1** and **F2** (Clara Validation).
+concerns from diagram nodes **D1** and **F2** (Clara-style validation).
 
 Supports:
 - Intel XPU (via ``intel_extension_for_pytorch`` + Triton)

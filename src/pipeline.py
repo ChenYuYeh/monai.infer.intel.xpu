@@ -1,16 +1,16 @@
 """
-pipeline.py — Holoscan + Clara + MONAI Operator Pipeline
-=========================================================
+pipeline.py — Holoscan-Style MONAI Pipeline with Clara-Style Validation
+=======================================================================
 Implements the full medical AI pipeline following the architecture diagram:
 
-  Data Sources (A) → Holoscan Ingestion (B) → Pre-Processing (C)
+  Data Sources (A) → Input Reading (B) → Pre-Processing (C)
   → PyTorch/MONAI Inference on Intel XPU (D) → Post-Processing (E)
-  → Clara AI Modules (F) → Output & Integration (G)
+  → Clara-style Validation (F) → Output & Integration (G)
 
-Each pipeline stage is modelled as an Operator class that can be composed
-into a directed graph identical to the Holoscan GXF execution model,
-but runs entirely in pure-Python / PyTorch so it works on any device
-including Intel XPU with Triton JIT kernels.
+Each pipeline stage is modelled as an Operator class inspired by Holoscan/GXF
+graph composition, but this repository does not import or execute Holoscan
+runtime APIs. It runs entirely in pure Python / PyTorch so it works on any
+device including Intel XPU with Triton JIT kernels.
 """
 
 from __future__ import annotations
@@ -152,11 +152,14 @@ class DataSource:
 
 
 # ────────────────────────────────────────────────────────────
-# B — Holoscan Input Operator
+# B — Input Operator
 # ────────────────────────────────────────────────────────────
 
-class HoloscanInputOperator:
-    """Reads NIfTI volumes or JPEG frame sequences (diagram node B1)."""
+class InputOperator:
+    """Reads NIfTI volumes or JPEG frame sequences (diagram node B1).
+
+    The NIfTI path is backed by nibabel, not the Holoscan runtime.
+    """
 
     def __init__(self, cfg: dict):
         self.cfg = cfg
@@ -176,8 +179,11 @@ class HoloscanInputOperator:
         return np.stack(arrays, axis=0)
 
 
+HoloscanInputOperator = InputOperator
+
+
 # ────────────────────────────────────────────────────────────
-# C — Pre-Processing Operators  (GXF-style)
+# C — Pre-Processing Operators
 # ────────────────────────────────────────────────────────────
 
 class PreProcessingOperator:
@@ -397,11 +403,15 @@ class PostProcessingOperator:
 
 
 # ────────────────────────────────────────────────────────────
-# F — Clara Medical AI Layer
+# F — Clara-Style Medical AI Layer
 # ────────────────────────────────────────────────────────────
 
 class ClaraSegmentationModule:
-    """Wraps Clara-style segmentation labelling & validation (nodes F1-F3)."""
+    """Implements Clara-style segmentation labelling and validation locally.
+
+    This module computes metrics such as Dice in pure Python/NumPy and does
+    not call NVIDIA Clara runtime APIs.
+    """
 
     def __init__(self, cfg: dict):
         self.labels = cfg["clara"]["segmentation"]["labels"]
@@ -473,7 +483,7 @@ class MedicalAIPipeline:
             case_ids=self.cfg["data"]["case_ids"],
             file_pattern=self.cfg["data"]["file_pattern"],
         )
-        self.input_op = HoloscanInputOperator(self.cfg)
+        self.input_op = InputOperator(self.cfg)
         self.preprocess_op = PreProcessingOperator(self.cfg, self.device)
         self.inference_op = InferenceOperator(self.cfg, self.device)
         self.postprocess_op = PostProcessingOperator(self.cfg)
@@ -484,7 +494,7 @@ class MedicalAIPipeline:
         case_id = nifti_path.parent.name
         logger.info("─── Processing %s ───", case_id)
 
-        # B — Ingest
+        # B — Input read
         volume = self.input_op.read_nifti(nifti_path)
 
         # C — Pre-process
@@ -499,7 +509,7 @@ class MedicalAIPipeline:
         # E — Post-process
         prediction = self.postprocess_op(logits, foreground_mask=volume > 0)
 
-        # F — Clara validation (against GT if same file is segmentation)
+        # F — Clara-style validation (against GT if same file is segmentation)
         report = {"case_id": case_id, "inference_time_s": infer_time}
         report["clara_validation"] = self.clara_module.validate(prediction, prediction)
 

@@ -1,24 +1,31 @@
 # Medical AI Pipeline — CT Kidney Tumor Segmentation
 
-> **Holoscan + PyTorch + Clara Medical AI Pipeline on Intel XPU / Triton**
+> **Holoscan-style PyTorch + Clara-style Medical AI Pipeline on Intel XPU / Triton**
 
 End-to-end inference pipeline for 3D CT kidney/tumor segmentation on the
 [KiTS19](https://github.com/neheller/kits19) dataset, using
-**MONAI**, **NVIDIA Clara** validation concepts, and the
-**Holoscan** operator-pipeline architecture — all accelerated on
+**MONAI**, **Clara-style** validation concepts, and a
+**Holoscan-style** staged operator-pipeline architecture — all accelerated on
 **Intel XPU** (native since PyTorch 2.5) and **Triton JIT kernels**
 (`torch.compile(backend="inductor")`).
+
+This repository does not import or execute NVIDIA Holoscan or NVIDIA Clara
+runtime APIs. Its ingestion, pre-processing, and validation stages use standard
+Python libraries (`nibabel`, `numpy`, `scipy`) and PyTorch tensors, while
+keeping the code organized in operator-style stages that resemble a
+Holoscan/GXF graph and Clara-style metric validation.
 
 ---
 
 ## Architecture
 
-The pipeline follows the NVIDIA Holoscan + Clara reference architecture:
+The pipeline follows a Holoscan-style + Clara-style reference architecture, but
+runs as a pure Python/PyTorch batch inference workflow:
 
 ```
 Data Sources (A)          NIfTI volumes / JPEG frames / DICOM
         │
-Holoscan Ingestion (B)    Frame Grabber, NIfTI Reader, Sensor Adapter
+Input Reading (B)         nibabel NIfTI reader / PIL frame reader
         │
 Pre-Processing (C)        CT windowing, normalisation, GPU memory transfer
         │
@@ -26,10 +33,34 @@ AI Inference (D)          MONAI UNet — Intel XPU + Triton JIT
         │
 Post-Processing (E)       Argmax, thresholding, morphology
         │
-Clara AI Layer (F)        Segmentation labelling, Dice validation, lifecycle
+Clara-style Validation (F) Segmentation labelling, Dice validation
         │
 Output & Integration (G)  Visualisation overlays, NIfTI export, JSON reports
 ```
+
+## Why Holoscan Is Not Used at Runtime
+
+KiTS19 is a stored dataset on disk, so this repo performs offline/batch
+inference over NIfTI files rather than operating as a real-time deployed
+medical application. For that workflow, Holoscan cannot be meaningfully
+utilized without adding a live data source, a Holoscan application graph, and
+runtime operators around the existing Python/PyTorch processing.
+
+Holoscan would be useful if this were a deployed application with things like:
+
+- real-time imaging streams
+- video/frame grabbers
+- sensor input
+- GPU memory message passing between operators
+- a production operator graph/runtime
+- integration with medical-device I/O
+
+## Clara-Style Validation
+
+The validation stage is also Clara-style rather than Clara-backed. In this repo,
+`ClaraSegmentationModule` computes segmentation labels and Dice metrics locally
+with NumPy. It does not call NVIDIA Clara runtime services, model lifecycle
+management, deployment tooling, or Clara application APIs.
 
 ## Project Structure
 
@@ -195,4 +226,4 @@ python -m pytest tests/run_all_unittest.py -v
 | **Model format** | Native PyTorch `state_dict` (no TensorRT dependency) |
 | **DICOM export** | Extend `OutputOperator` to write DICOM SEG / SR |
 | **Containerisation** | Standard Docker with `intel/oneapi-basekit` base image |
-| **Scaling** | Holoscan operator DAG supports multi-GPU / multi-node |
+| **Scaling** | Current repo is single-process Python/PyTorch; a deployed Holoscan app could add an operator DAG for multi-GPU / multi-node workflows |

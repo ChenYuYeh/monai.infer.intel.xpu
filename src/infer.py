@@ -34,7 +34,7 @@ import torch
 # ── project imports ──────────────────────────────────────────
 from src.pipeline import (
     ClaraSegmentationModule,
-    HoloscanInputOperator,
+    InputOperator,
     InferenceOperator,
     OutputOperator,
     PostProcessingOperator,
@@ -90,7 +90,7 @@ def run_inference(
     logger.info("Device: %s", device)
 
     # Instantiate operators (mirrors the pipeline diagram)
-    input_op = HoloscanInputOperator(cfg)
+    input_op = InputOperator(cfg)
     preprocess_op = PreProcessingOperator(cfg, device)
     inference_op = InferenceOperator(cfg, device)
     postprocess_op = PostProcessingOperator(cfg)
@@ -98,13 +98,13 @@ def run_inference(
     output_op = OutputOperator(cfg)
 
     logger.info("╔══════════════════════════════════════════════════════════╗")
-    logger.info("║  Medical AI Pipeline — Holoscan + MONAI + Clara         ║")
+    logger.info("║  Medical AI Pipeline — MONAI + Clara-style Validation   ║")
     logger.info("╠══════════════════════════════════════════════════════════╣")
-    logger.info("║  [B] Holoscan Input Operator : NIfTI / Frame Reader     ║")
-    logger.info("║  [C] Holoscan Pre-Processing : CT Window + Normalize    ║")
+    logger.info("║  [B] Input Reader            : NIfTI / Frame Reader     ║")
+    logger.info("║  [C] Pre-Processing          : CT Window + Normalize    ║")
     logger.info("║  [D] MONAI Inference         : UNet + SlidingWindow     ║")
     logger.info("║  [E] Post-Processing         : Argmax + Label Map       ║")
-    logger.info("║  [F] Clara Validation        : Dice / Metrics           ║")
+    logger.info("║  [F] Clara-style Validation  : Dice / Metrics           ║")
     logger.info("║  [G] Output & Integration    : Predictions + Reports    ║")
     logger.info("╠══════════════════════════════════════════════════════════╣")
     logger.info("║  Device: %-47s ║", str(device))
@@ -124,15 +124,15 @@ def run_inference(
 
         logger.info("═══ %s ═══", cid)
 
-        # B — Holoscan Ingest
-        logger.info("  [B] Holoscan: Reading NIfTI volume …")
+        # B — Input read (nibabel-backed NIfTI reader)
+        logger.info("  [B] Input:     Reading NIfTI volume …")
         volume = input_op.read_nifti(nifti_path)
-        logger.info("  [B] Holoscan: Volume shape: %s", volume.shape)
+        logger.info("  [B] Input:     Volume shape: %s", volume.shape)
 
-        # C — Holoscan Pre-process (GXF-style operators)
-        logger.info("  [C] Holoscan: Pre-processing (CT window → normalize → device transfer) …")
+        # C — Pre-process (Python/PyTorch operator)
+        logger.info("  [C] Pre-process: CT window → normalize → device transfer …")
         tensor = preprocess_op(volume)
-        logger.info("  [C] Holoscan: Tensor %s on %s", tensor.shape, tensor.device)
+        logger.info("  [C] Pre-process: Tensor %s on %s", tensor.shape, tensor.device)
 
         # D — MONAI Inference (UNet + sliding window)
         logger.info("  [D] MONAI:    Running sliding-window inference (UNet) …")
@@ -147,10 +147,10 @@ def run_inference(
         unique, counts = np.unique(prediction, return_counts=True)
         logger.info("  [E] Post:     Labels found: %s", dict(zip(unique.tolist(), counts.tolist())))
 
-        # F — Clara validation (self-comparison when no separate GT)
-        logger.info("  [F] Clara:    Computing validation metrics (Dice) …")
+        # F — Clara-style validation (self-comparison when no separate GT)
+        logger.info("  [F] Clara-style: Computing validation metrics (Dice) …")
         validation = clara_module.validate(prediction, prediction)
-        logger.info("  [F] Clara:    Validation results: %s", validation)
+        logger.info("  [F] Clara-style: Validation results: %s", validation)
 
         # G — Output
         logger.info("  [G] Output:   Saving prediction + report …")
