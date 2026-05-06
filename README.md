@@ -216,6 +216,22 @@ Reports latency percentiles (p50/p90/p95/p99), throughput (FPS), and memory.
 python -m pytest tests/run_all_unittest.py -v
 ```
 
+## Visualized Output Example
+
+The checked local marker output for `case_00030` is available under
+`output/markered/case_00030/`. The montage below shows the kidney tissue outline
+in cyan, tumor pixels in magenta, and yellow `T` markers on connected tumor
+regions of at least 10 pixels.
+
+![case_00030 kidney tissue marker montage](output/markered/case_00030/case_00030_montage.png)
+
+These three JPEGs are the original tissue images used as source slices for the
+marker visualization grid:
+
+| Slice 9 | Slice 18 | Slice 32 |
+|---------|----------|----------|
+| ![case_00030 original tissue slice 9](output/markered/case_00030/case_00030_0009.jpg) | ![case_00030 original tissue slice 18](output/markered/case_00030/case_00030_0018.jpg) | ![case_00030 original tissue slice 32](output/markered/case_00030/case_00030_0032.jpg) |
+
 ## Deployment Considerations
 
 | Concern | Approach |
